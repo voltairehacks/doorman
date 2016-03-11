@@ -1,0 +1,28 @@
+.profileContainer {
+  text-align: center;
+  width: 100%;
+  padding: 20px;
+}
+
+  .profileContainer .profile {
+    width: 200px;
+    display: inline-block;
+    text-align: center;
+  }
+
+    .profileContainer .profile .imageContainer {
+      max-width: 128px;
+      max-height: 128px;
+      overflow: hidden;
+      border-radius: 100px;
+      display: inline-block;
+    }
+
+      .profileContainer .profile .imageContainer .profileImage {
+        max-width: 128px;
+        max-height: 128px;
+      }
+
+    .profileContainer .profile .nameContainer {
+      display: inline-block;
+    }
