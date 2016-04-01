@@ -4,8 +4,6 @@ import moment from 'moment'
 
 import Profile from './profile'
 
-const seenInLastTwoMinutes = lastSeen => lastSeen ? moment().isBefore(lastSeen.add(moment.duration(120000))) : false
-
 const activeFirst = lastSeen => {
   return (a, b) => {
     const A_BIGGER_PRIORITY = 1
@@ -21,7 +19,6 @@ class CurrentList extends React.Component {
   render() {
     const clients = Object.keys(this.props.lastSeen)
         .sort(mac => activeFirst(this.props.lastSeen))
-        .filter(mac => seenInLastTwoMinutes(this.props.lastSeen[mac]))
 
     const named = clients.filter(c => this.props.pairs[c])
     const extra = clients.length - named.length

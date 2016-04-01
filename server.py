@@ -2,17 +2,23 @@ from flask import Flask, render_template
 import nmap
 import socketio
 import threading
+import os
 import time
-
+from shove import Shove
 
 nm = nmap.PortScanner()
 sio = socketio.Server(async_mode='threading')
 app = Flask(__name__, static_url_path='/static')
-current_pairs = {}
+
+current_pairs = Shove('file://' + os.getcwd() + 'profiles.shove')
+
 map_sid_to_addr = {}
 map_addr_to_sid = {}
 map_addr_to_mac = {}
 last_scan = []
+
+def shoveToDict(shove):
+    return dict([a, shove[a]] for a in shove)
 
 
 def sid_to_mac(sid):
@@ -38,7 +44,7 @@ def connect(sid, environ):
         map_addr_to_sid[environ['REMOTE_ADDR']] = sid
         if sid_to_mac(sid) in current_pairs:
             sio.emit('name', current_pairs[sid_to_mac(sid)], room=sid)
-    sio.emit('pairs', current_pairs, room=sid)
+    sio.emit('pairs', shoveToDict(current_pairs), room=sid)
     sio.emit('clients', last_scan, room=sid)
     print('client connected ', sid)
 
@@ -58,13 +64,15 @@ def associate(sid, data):
 
 def loop():
     while True:
-        nm.scan(hosts='192.168.0.1-255', arguments='-n -sP')
+        nm.scan(hosts='192.168.1.1-255', arguments='-n -sP')
         for x in nm.all_hosts():
             if 'mac' in nm[x]['addresses']:
                 map_addr_to_mac[x] = nm[x]['addresses']['mac']
-        last_scan = [unique for unique in set([nm[x]['addresses']['mac']
-                                               for x in nm.all_hosts()
-                                               if 'mac' in nm[x]['addresses']])]
+        new_scan = [unique for unique in set([nm[x]['addresses']['mac']
+                                              for x in nm.all_hosts()
+                                              if 'mac' in nm[x]['addresses']])]
+        print(new_scan)
+        last_scan = new_scan
         sio.emit('clients', last_scan)
         time.sleep(6)
 

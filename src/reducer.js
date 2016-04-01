@@ -2,11 +2,20 @@ import { update } from './util'
 import moment from 'moment'
 import _ from 'lodash'
 
+const seenInLastTwoMinutes = lastSeen => {
+  return lastSeen ? moment().isBefore(lastSeen.add(moment.duration(120000))) : false
+}
+
 export default (state, action) => {
 
   if (action.type === 'CURRENT_MACS') {
+    const old = _.fromPairs(
+      Object.keys(state.lastSeen)
+        .filter(e => seenInLastTwoMinutes(state.lastSeen[e]))
+        .map(mac => [mac, state.lastSeen[mac]])
+    )
     return update(state, {
-      lastSeen: update(state.lastSeen, _.fromPairs(action.payload.map(mac => [mac, moment()])))
+      lastSeen: update(old, _.fromPairs(action.payload.map(mac => [mac, moment()])))
     })
   }
   if (action.type === 'PAIR') {
