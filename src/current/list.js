@@ -29,7 +29,7 @@ class CurrentList extends React.Component {
           return <Profile mac={mac} profile={profile} key={mac.replace(/:/g, '')} />
         })
       }
-      { extra ? <p>And { extra } unidentified devices</p> : '' }
+      { extra ? <p>Also detected { extra } unidentified devices</p> : '' }
     </div>
   }
 }
