@@ -22,6 +22,11 @@ class CurrentList extends React.Component {
 
     const named = clients.filter(c => this.props.pairs[c])
     const extra = clients.length - named.length
+    if (!named.length) {
+      return <div className='loading'>
+        <h2>Loading...</h2>
+      </div>
+    }
     return <div className='profileContainer'>
       {
         named.map(mac => {

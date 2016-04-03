@@ -7,7 +7,13 @@ const seenInLastTwoMinutes = lastSeen => {
 }
 
 export default (state, action) => {
-
+  if (action.type === 'FACEBOOK') {
+    return update(state, {
+      facebook: action.payload,
+      name: action.payload.name,
+      email: 'https://graph.facebook.com/' + action.payload.id + '/picture?type=large'
+    })
+  }
   if (action.type === 'CURRENT_MACS') {
     const old = _.fromPairs(
       Object.keys(state.lastSeen)
@@ -25,7 +31,7 @@ export default (state, action) => {
     return update(state, { pairs: action.payload })
   }
   if (action.type === 'SET_NAME') {
-    return update(state, { name: action.payload })
+    return update(state, action.payload)
   }
   if (action.type === 'CONNECTED') {
     return update(state, { connected: true })
@@ -36,5 +42,5 @@ export default (state, action) => {
   if (action.type === 'SET_SOCKET') {
     return update(state, { socket: action.payload })
   }
-  return state || { pairs: {}, name: '', lastSeen: {}, socket: null }
+  return state || { pairs: {}, name: '', lastSeen: {}, socket: null, facebook: null }
 }

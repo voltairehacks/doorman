@@ -2,3 +2,4 @@ static/*
 node_modules
 env
 *.sw[a-z]
+profiles.shove

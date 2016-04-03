@@ -7,7 +7,7 @@ import FbConnect from './facebook'
 export default class Root extends React.Component {
   render() {
     return <div>
-      <h1>Voltaire</h1>
+      <h1><i className="fa fa-bell-o"></i> Voltaire's Doorman</h1>
       <CurrentlyOnline />
       <FbConnect />
     </div>
