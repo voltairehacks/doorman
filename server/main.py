@@ -1,5 +1,5 @@
 # Standard library modules
-import os
+import shelve
 import sqlite3
 import threading
 import time
@@ -8,15 +8,14 @@ from collections import namedtuple
 # Third party libraries
 import nmap
 import socketio
-from flask import Flask, request
-from shove import Shove
+from flask import Flask, request, json
 
 # Local imports
 
 
 Device = namedtuple('Device', ['ip', 'mac', 'timestamp'])
 
-CREATE_TABLE = '''CREATE TABLE seen(
+CREATE_TABLE = '''CREATE TABLE IF NOT EXISTS seen(
     id INTEGER PRIMARY KEY,
     mac TEXT,
     ip TEXT,
@@ -47,7 +46,7 @@ class NmapHarvester:
 
     def register_listener(self, listener):
         if listener not in self.listeners:
-            self.listeners.push(listener)
+            self.listeners.append(listener)
 
     def drop_listener(self, listener):
         self.listeners.remove(listener)
@@ -59,7 +58,7 @@ class NmapHarvester:
         for ip in self.nm.all_hosts():
             addresses = self.nm[ip]['addresses']
             if 'mac' in addresses:
-                values.push(Device(ip, addresses['mac'], timestamp))
+                values.append(Device(ip, addresses['mac'], timestamp))
         return values
 
     def _broadcast(self, results):
@@ -117,7 +116,7 @@ class NetworkLogger:
     def __init__(self, url='storage.sqlite3'):
         self.db = sqlite3.connect(url)
         cursor = self.db.cursor()
-        cursor.execute(self.CREATE_TABLE)
+        cursor.execute(CREATE_TABLE)
 
     def seen(self, device):
         cursor = self.db.cursor()
@@ -135,7 +134,7 @@ class MacToUser:
     """
 
     def __init__(self):
-        self.mac_to_user = Shove('file://' + os.getcwd() + 'profiles.storage')
+        self.mac_to_user = shelve.open('profiles.storage')
 
     def associate(self, mac, user):
         self.mac_to_user[mac] = user
@@ -148,6 +147,8 @@ class HTTPServer:
 
     def __init__(self, mac_to_user, network_mapping):
         self.app = Flask(__name__)
+        self.app.debug = True
+
         self.sio = socketio.Server(async_mode='threading')
 
         self.mac_to_user = mac_to_user
@@ -182,8 +183,8 @@ class HTTPServer:
         def get_profile(mac):
             profile = self.mac_to_user.get_for_mac(mac)
             if not profile:
-                return Flask.jsonify(not_found=True)
-            return Flask.jsonify(profile)
+                return json.jsonify(not_found=True)
+            return json.dumps(profile)
 
         @app.route('/profiles', methods=['GET'])
         def get_profiles():
@@ -192,20 +193,20 @@ class HTTPServer:
             results = []
             for mac in query:
                 results.append(self.mac_to_user.get_for_mac(mac))
-            return Flask.jsonify(results)
+            return json.dumps(results)
 
         @app.route('/profile', methods=['POST'])
         def put_profile():
             ip = request.remote_addr
             mac = self.network_mapping.get_mac_for_ip(ip)
             if not mac:
-                return Flask.jsonify(success=False)
+                return json.jsonify(success=False)
 
             profile = request.get_json()
             self.mac_to_user.associate(mac, profile)
             self.notify_new_association(mac, profile)
 
-            return Flask.jsonify(success=True)
+            return json.jsonify(success=True)
 
     def setup_websocket(self):
         sio = self.sio
@@ -223,23 +224,26 @@ class HTTPServer:
         def admin_associate():
             query = request.get_json()
 
-            mac = query.mac
-            profile = query.profile
+            mac = query['mac']
+            profile = query['profile']
 
             self.mac_to_user.associate(mac, profile)
             self.notify_new_association(mac, profile)
 
-            return Flask.jsonify(success=True)
+            return json.jsonify(success=True)
 
         @app.route('/get_all_associations')
         def admin_associations():
-            return Flask.jsonify(self.mac_to_user.mac_to_user)
+            return json.dumps(dict(self.mac_to_user.mac_to_user.items()))
 
     def notify_new_association(self, mac, profile):
         self.sio.emit('association', {'mac': mac, 'profile': profile})
 
     def notify_latest_macs(self, macs):
         self.sio.emit('macs', macs)
+
+    def listen(self):
+        self.app.run(threaded=True, host='0.0.0.0', port=8080)
 
 
 class Orchestrator:
@@ -289,13 +293,9 @@ class Orchestrator:
         def infinite_scan():
             self.harvester.infinite_scan()
 
-        def start_server():
-            self.server.listen()
-
         self.thread_targets = [
             infinite_scan,
             cleanup_older,
-            start_server
         ]
 
     def start_threads(self):
@@ -304,3 +304,7 @@ class Orchestrator:
             thread = threading.Thread(target=thread_target)
             thread.start()
             self.threads.append(thread)
+        self.server.listen()
+
+if __name__ == '__main__':
+    Orchestrator()

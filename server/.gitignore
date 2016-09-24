@@ -1,0 +1,6 @@
+.Python
+bin
+include
+lib
+pip-selfcheck.json
+storage.sqlite3
