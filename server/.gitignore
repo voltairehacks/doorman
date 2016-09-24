@@ -4,3 +4,5 @@ include
 lib
 pip-selfcheck.json
 storage.sqlite3
+storage.sqlite3-journal
+profiles.storage.db

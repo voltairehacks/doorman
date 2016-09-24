@@ -1,4 +1,5 @@
 # Standard library modules
+import Queue
 import shelve
 import sqlite3
 import threading
@@ -100,7 +101,8 @@ class NetworkRecentRegistry:
         self.mac_to_last_timestamp[device.mac] = device
 
     def expire_entries_before_timestamp(self, timestamp):
-        for mac, device_timestamp in self.mac_to_last_timestamp:
+        for mac in self.mac_to_last_timestamp.keys():
+            device_timestamp = self.mac_to_last_timestamp[mac]
             if device_timestamp < timestamp:
                 del self.mac_to_last_timestamp[mac]
 
@@ -114,18 +116,25 @@ class NetworkLogger:
     """
 
     def __init__(self, url='storage.sqlite3'):
-        self.db = sqlite3.connect(url)
-        cursor = self.db.cursor()
-        cursor.execute(CREATE_TABLE)
+        self.url = url
+        self.queue = Queue.Queue()
 
-    def seen(self, device):
-        cursor = self.db.cursor()
-        cursor.execute(self.insertQuery(device))
+    def init(self):
+        self.db = sqlite3.connect(self.url)
+        self.db.execute(CREATE_TABLE)
+        self.db.commit()
 
-    def insertQuery(self, device):
-        return 'INSERT INTO seen(mac, ip, timestamp) VALUES({}, {}, {}'.format(
-            device.mac, device.ip, device.timestamp
-        )
+    def await_queue(self):
+        while True:
+            devices = self.queue.get()
+            self.db.executemany(
+                'INSERT INTO seen(mac, ip, timestamp) VALUES(?, ?, ?)',
+                devices
+            )
+            self.db.commit()
+
+    def push_devices(self, devices):
+        self.queue.put(devices)
 
 
 class MacToUser:
@@ -145,7 +154,7 @@ class MacToUser:
 
 class HTTPServer:
 
-    def __init__(self, mac_to_user, network_mapping):
+    def __init__(self, mac_to_user, network_mapping, recents):
         self.app = Flask(__name__)
         self.app.debug = True
 
@@ -153,6 +162,7 @@ class HTTPServer:
 
         self.mac_to_user = mac_to_user
         self.network_mapping = network_mapping
+        self.recents = recents
 
         self.map_socket_to_ip = {}
         self.map_ip_to_socket = {}
@@ -236,6 +246,10 @@ class HTTPServer:
         def admin_associations():
             return json.dumps(dict(self.mac_to_user.mac_to_user.items()))
 
+        @app.route('/get_recent')
+        def admin_recents():
+            return json.dumps(self.recents.mac_to_last_timestamp)
+
     def notify_new_association(self, mac, profile):
         self.sio.emit('association', {'mac': mac, 'profile': profile})
 
@@ -257,7 +271,7 @@ class Orchestrator:
         self.logger = NetworkLogger()
         self.mac_to_user = MacToUser()
 
-        self.server = HTTPServer(self.mac_to_user, self.mapping)
+        self.server = HTTPServer(self.mac_to_user, self.mapping, self.recents)
 
         self.setup_dispatch()
         self.setup_threads()
@@ -269,14 +283,17 @@ class Orchestrator:
         def dispatch_to_all(devices):
             for device in devices:
                 self.mapping.seen(device)
-                self.logger.seen(device)
                 self.recents.seen(device)
+
+        def dispatch_to_logger_queue(devices):
+            self.logger.push_devices(devices)
 
         def notify_clients(devices):
             macs = self.recents.latest_macs()
             self.server.notify_latest_macs(macs)
 
         self.harvester.register_listener(dispatch_to_all)
+        self.harvester.register_listener(dispatch_to_logger_queue)
         self.harvester.register_listener(notify_clients)
 
     def setup_threads(self):
@@ -293,9 +310,14 @@ class Orchestrator:
         def infinite_scan():
             self.harvester.infinite_scan()
 
+        def logger_await():
+            self.logger.init()
+            self.logger.await_queue()
+
         self.thread_targets = [
             infinite_scan,
             cleanup_older,
+            logger_await
         ]
 
     def start_threads(self):
