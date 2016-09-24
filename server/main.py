@@ -1,14 +1,26 @@
 # Standard library modules
+import os
+import sqlite3
 import time
 from collections import namedtuple
 
 # Third party libraries
 import nmap
+import socketio
+from flask import Flask
+from shove import Shove
 
 # Local imports
 
 
 Device = namedtuple('Device', ['ip', 'mac', 'timestamp'])
+
+CREATE_TABLE = '''CREATE TABLE seen(
+    id INTEGER PRIMARY KEY,
+    mac TEXT,
+    ip TEXT,
+    timestamp INTEGER
+)'''
 
 
 class NmapHarvester:
@@ -77,7 +89,9 @@ class NetworkDeviceMapping:
 
 
 class NetworkRecentRegistry:
-    """ Registry of the last seen MAC addresses, with their timestamps. """
+    """
+    Registry of the last seen MAC addresses, with their timestamps.
+    """
 
     def __init__(self):
         self.mac_to_last_timestamp = {}
@@ -91,11 +105,33 @@ class NetworkRecentRegistry:
                 del self.mac_to_last_timestamp[mac]
 
 
+class NetworkLogger:
+    """
+    Stores seen MAC addresses, with their timestamps, into a database.
+    """
+
+    def __init__(self, url='storage.sqlite3'):
+        self.db = sqlite3.connect(url)
+        cursor = self.db.cursor()
+        cursor.execute(self.CREATE_TABLE)
+
+    def seen(self, device):
+        cursor = self.db.cursor()
+        cursor.execute(self.insertQuery(device))
+
+    def insertQuery(self, device):
+        return 'INSERT INTO seen(mac, ip, timestamp) VALUES({}, {}, {}'.format(
+            device.mac, device.ip, device.timestamp
+        )
+
+
 class MacToUser:
-    """ Doorman also stores information about each user. """
+    """
+    Doorman also stores information about each user.
+    """
 
     def __init__(self):
-        self.mac_to_user = {}
+        self.mac_to_user = Shove('file://' + os.getcwd() + 'profiles.storage')
 
     def associate(self, mac, user):
         self.mac_to_user[mac] = user
@@ -104,18 +140,46 @@ class MacToUser:
         return self.mac_to_user[mac]
 
 
-class DoormanServer:
+class HTTPServer:
 
     def __init__(self):
-        self.recent = NetworkRecentRegistry()
-        self.mac_to_user = MacToUser()
-        self.devices = NetworkDeviceMapping()
+        self.app = Flask(__name__)
+        self.sio = socketio.Server(async_mode='threading')
+
+        self.map_socket_to_ip = {}
+        self.map_ip_to_socket = {}
+
+        self.app.wsgi_app = socketio.Middleware(self.sio, self.app.wsgi_app)
+
+        self.setupLocations()
+        self.setupWebsocket()
+
+    def setupLocations(self):
+        app = self.app
+
+        @app.route('/app.js')
+        def serve_app():
+            return app.send_static_file('./dist/app.js')
+
+        @app.route('/', defaults={'path': ''})
+        @app.route('/<path:path>')
+        def serve_index():
+            return app.send_static_file('./dist/index.html')
+
+    def setupWebsocket(self):
+        sio = self.sio
+
+        @sio.on('connect')
+        def connect(socket_id, environ):
+            ip = environ['REMOTE_ADDR']
+            self.map_socket_to_ip[socket_id] = ip
+            self.map_ip_to_socket[ip] = socket_id
 
 
 class Orchestrator:
 
     def __init__(self):
-        self.server = DoormanServer()
+        self.server = HTTPServer()
         self.harvester = NmapHarvester()
 
         self.threadTargets = []
