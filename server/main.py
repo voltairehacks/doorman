@@ -1,13 +1,14 @@
 # Standard library modules
 import os
 import sqlite3
+import threading
 import time
 from collections import namedtuple
 
 # Third party libraries
 import nmap
 import socketio
-from flask import Flask
+from flask import Flask, request
 from shove import Shove
 
 # Local imports
@@ -96,13 +97,16 @@ class NetworkRecentRegistry:
     def __init__(self):
         self.mac_to_last_timestamp = {}
 
-    def seen(self, device, timestamp):
-        self.mac_to_last_timestamp[device.mac] = timestamp
+    def seen(self, device):
+        self.mac_to_last_timestamp[device.mac] = device
 
     def expire_entries_before_timestamp(self, timestamp):
         for mac, device_timestamp in self.mac_to_last_timestamp:
             if device_timestamp < timestamp:
                 del self.mac_to_last_timestamp[mac]
+
+    def latest_macs(self):
+        return self.mac_to_last_timestamp.keys()
 
 
 class NetworkLogger:
@@ -142,19 +146,24 @@ class MacToUser:
 
 class HTTPServer:
 
-    def __init__(self):
+    def __init__(self, mac_to_user, network_mapping):
         self.app = Flask(__name__)
         self.sio = socketio.Server(async_mode='threading')
+
+        self.mac_to_user = mac_to_user
+        self.network_mapping = network_mapping
 
         self.map_socket_to_ip = {}
         self.map_ip_to_socket = {}
 
         self.app.wsgi_app = socketio.Middleware(self.sio, self.app.wsgi_app)
 
-        self.setupLocations()
-        self.setupWebsocket()
+        self.setup_api()
+        self.setup_websocket()
+        self.setup_admin_endpoints()
+        self.setup_static()
 
-    def setupLocations(self):
+    def setup_static(self):
         app = self.app
 
         @app.route('/app.js')
@@ -166,7 +175,39 @@ class HTTPServer:
         def serve_index():
             return app.send_static_file('./dist/index.html')
 
-    def setupWebsocket(self):
+    def setup_api(self):
+        app = self.app
+
+        @app.route('/profile/<mac>', methods=['GET'])
+        def get_profile(mac):
+            profile = self.mac_to_user.get_for_mac(mac)
+            if not profile:
+                return Flask.jsonify(not_found=True)
+            return Flask.jsonify(profile)
+
+        @app.route('/profiles', methods=['GET'])
+        def get_profiles():
+            query = request.get_json()
+
+            results = []
+            for mac in query:
+                results.append(self.mac_to_user.get_for_mac(mac))
+            return Flask.jsonify(results)
+
+        @app.route('/profile', methods=['POST'])
+        def put_profile():
+            ip = request.remote_addr
+            mac = self.network_mapping.get_mac_for_ip(ip)
+            if not mac:
+                return Flask.jsonify(success=False)
+
+            profile = request.get_json()
+            self.mac_to_user.associate(mac, profile)
+            self.notify_new_association(mac, profile)
+
+            return Flask.jsonify(success=True)
+
+    def setup_websocket(self):
         sio = self.sio
 
         @sio.on('connect')
@@ -175,11 +216,91 @@ class HTTPServer:
             self.map_socket_to_ip[socket_id] = ip
             self.map_ip_to_socket[ip] = socket_id
 
+    def setup_admin_endpoints(self):
+        app = self.app
+
+        @app.route('/admin_associate', methods=['POST'])
+        def admin_associate():
+            query = request.get_json()
+
+            mac = query.mac
+            profile = query.profile
+
+            self.mac_to_user.associate(mac, profile)
+            self.notify_new_association(mac, profile)
+
+            return Flask.jsonify(success=True)
+
+        @app.route('/get_all_associations')
+        def admin_associations():
+            return Flask.jsonify(self.mac_to_user.mac_to_user)
+
+    def notify_new_association(self, mac, profile):
+        self.sio.emit('association', {'mac': mac, 'profile': profile})
+
+    def notify_latest_macs(self, macs):
+        self.sio.emit('macs', macs)
+
 
 class Orchestrator:
 
     def __init__(self):
-        self.server = HTTPServer()
         self.harvester = NmapHarvester()
 
-        self.threadTargets = []
+        self.mapping = NetworkDeviceMapping()
+        self.recents = NetworkRecentRegistry()
+
+        self.logger = NetworkLogger()
+        self.mac_to_user = MacToUser()
+
+        self.server = HTTPServer(self.mac_to_user, self.mapping)
+
+        self.setup_dispatch()
+        self.setup_threads()
+
+        self.start_threads()
+
+    def setup_dispatch(self):
+
+        def dispatch_to_all(devices):
+            for device in devices:
+                self.mapping.seen(device)
+                self.logger.seen(device)
+                self.recents.seen(device)
+
+        def notify_clients(devices):
+            macs = self.recents.latest_macs()
+            self.server.notify_latest_macs(macs)
+
+        self.harvester.register_listener(dispatch_to_all)
+        self.harvester.register_listener(notify_clients)
+
+    def setup_threads(self):
+        def cleanup_older():
+            while True:
+                timestamp = time.time() - 60  # seconds
+                self.recents.expire_entries_before_timestamp(timestamp)
+
+                macs = self.recents.latest_macs()
+                self.server.notify_latest_macs(macs)
+
+                time.sleep(30)
+
+        def infinite_scan():
+            self.harvester.infinite_scan()
+
+        def start_server():
+            self.server.listen()
+
+        self.thread_targets = [
+            infinite_scan,
+            cleanup_older,
+            start_server
+        ]
+
+    def start_threads(self):
+        self.threads = []
+        for thread_target in self.thread_targets:
+            thread = threading.Thread(target=thread_target)
+            thread.start()
+            self.threads.append(thread)
