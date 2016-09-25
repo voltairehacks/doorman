@@ -157,6 +157,7 @@ class HTTPServer:
     def __init__(self, mac_to_user, network_mapping, recents):
         self.app = Flask(__name__)
         self.app.debug = True
+        self.app._static_folder = 'dist'
 
         self.sio = socketio.Server(async_mode='threading')
 
@@ -177,14 +178,21 @@ class HTTPServer:
     def setup_static(self):
         app = self.app
 
-        @app.route('/app.js')
+        @app.route('/main.js')
         def serve_app():
-            return app.send_static_file('./dist/app.js')
+            return self.serve_file('main.js')
+
+        @app.route('/main.js.map')
+        def serve_app_map():
+            return self.serve_file('main.js.map')
 
         @app.route('/', defaults={'path': ''})
         @app.route('/<path:path>')
-        def serve_index():
-            return app.send_static_file('./dist/index.html')
+        def serve_index(path):
+            return self.serve_file('index.html')
+
+    def serve_file(self, path):
+        return self.app.send_static_file(path)
 
     def setup_api(self):
         app = self.app
