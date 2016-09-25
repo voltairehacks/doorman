@@ -4,12 +4,14 @@ export const OK = 'success'
 export const LOADING = 'loading'
 export const ERRORED = 'errored'
 
-export const contexts = {}
-export const failbackTimeToNow = now => now ? now() : new Date().getTime()
+export const fallbackTimeToNow = now => now ? now() : new Date().getTime()
 
+export const JSON_HEADER = { 'content-type': 'application/json' }
+
+export const contexts = {};
 ['success', 'loading', 'errored'].forEach(name => {
   contexts[name] = (result, now) => {
-    const time = failbackTimeToNow(now)
+    const time = fallbackTimeToNow(now)
     return {
       type: name,
       time,
@@ -19,7 +21,14 @@ export const failbackTimeToNow = now => now ? now() : new Date().getTime()
 })
 
 export function update() {
-  return Object.assign.apply({}, arguments)
+  const args = [].slice.call(arguments);
+  args.forEach((element, index) => {
+    if (!element) {
+      args[index] = {}
+    }
+  })
+  args.unshift({})
+  return Object.assign.apply(null, args)
 }
 
 export function setLoading(namespace, viewModel) {
@@ -45,5 +54,5 @@ export function fails(namespace, doUpdate) {
 }
 
 export function simpleFetch(url) {
-  return fetch(url).then(res => res.body())
+  return fetch(url).then(res => res.json())
 }

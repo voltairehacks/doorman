@@ -4,9 +4,10 @@ import {
   LOADING,
   ERRORED,
   contexts,
-  failbackTimeToNow,
+  fallbackTimeToNow,
   setLoading,
   fails,
+  update,
   simpleFetch
 } from '../constants'
 
@@ -15,7 +16,7 @@ export default function withLatestMacData(viewModel, doUpdate) {
 
   if (shouldTriggerMacLoad()) {
     simpleFetch('/latest_macs')
-      .then(updateViewModelWithProfiles)
+      .then(updateViewModelWithLatestMacs)
       .catch(fails(namespace, doUpdate))
     return setLoading(namespace, viewModel)
   }
@@ -24,8 +25,8 @@ export default function withLatestMacData(viewModel, doUpdate) {
   const RETRY_MAC_FETCH = 5 * SECONDS
 
   function shouldTriggerMacLoad(now) {
-    const time = failbackTimeToNow(now)
-    const context = loadingContext[namespace]
+    const time = fallbackTimeToNow(now)
+    const context = viewModel.loading && viewModel.loading[namespace]
 
     if (context) {
       if (context.type === OK)      return time - context.time > HEARTBEAT_RELOAD
@@ -38,7 +39,7 @@ export default function withLatestMacData(viewModel, doUpdate) {
     doUpdate(viewModel => {
       return update(viewModel, {
         loading: update(viewModel.loading, 
-          { [namespace]: contexts.succcess(macs) }
+          { [namespace]: contexts.success(macs) }
         ),
         latestMacs: macs
       })

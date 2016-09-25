@@ -1,5 +1,5 @@
 # Standard library modules
-import queue
+import Queue
 import shelve
 import sqlite3
 import threading
@@ -33,7 +33,7 @@ class NmapHarvester:
     Listen to new scan results with the `register_listener` method.
     """
 
-    def __init__(self, query_range='192.168.1.1-255', secs_between_scans=6):
+    def __init__(self, query_range='192.168.0.1-255', secs_between_scans=6):
         self.nm = nmap.PortScanner()
         self.query_range = query_range
         self.listeners = []
@@ -56,6 +56,7 @@ class NmapHarvester:
         values = []
         timestamp = time.time()
         self.nm.scan(hosts=self.query_range, arguments='-n -sP')
+        print('scan results', self.nm.all_hosts())
         for ip in self.nm.all_hosts():
             addresses = self.nm[ip]['addresses']
             if 'mac' in addresses:
@@ -98,7 +99,7 @@ class NetworkRecentRegistry:
         self.mac_to_last_timestamp = {}
 
     def seen(self, device):
-        self.mac_to_last_timestamp[device.mac] = device
+        self.mac_to_last_timestamp[device.mac] = device.timestamp
 
     def expire_entries_before_timestamp(self, timestamp):
         for mac in self.mac_to_last_timestamp.keys():
@@ -117,7 +118,7 @@ class NetworkLogger:
 
     def __init__(self, url='storage.sqlite3'):
         self.url = url
-        self.queue = queue.Queue()
+        self.queue = Queue.Queue()
 
     def init(self):
         self.db = sqlite3.connect(self.url)
@@ -149,7 +150,10 @@ class MacToUser:
         self.mac_to_user[mac] = user
 
     def get_for_mac(self, mac):
-        return self.mac_to_user[mac]
+        if mac in self.mac_to_user:
+            return self.mac_to_user[mac]
+        else:
+            return { 'unregistered': True }
 
 
 class HTTPServer:
@@ -204,13 +208,14 @@ class HTTPServer:
                 return json.jsonify(not_found=True)
             return json.dumps(profile)
 
-        @app.route('/profiles', methods=['GET'])
+        @app.route('/profiles', methods=['POST'])
         def get_profiles():
             query = request.get_json()
+            print(query)
 
-            results = []
+            results = {}
             for mac in query:
-                results.append(self.mac_to_user.get_for_mac(mac))
+                results[mac] = self.mac_to_user.get_for_mac(mac)
             return json.dumps(results)
 
         @app.route('/profile', methods=['POST'])
@@ -225,6 +230,14 @@ class HTTPServer:
             self.notify_new_association(mac, profile)
 
             return json.jsonify(success=True)
+
+        @app.route('/associations')
+        def associations():
+            return json.dumps(dict(self.mac_to_user.mac_to_user.items()))
+
+        @app.route('/latest_macs')
+        def latest_macs():
+            return json.dumps(self.recents.mac_to_last_timestamp)
 
     def setup_websocket(self):
         sio = self.sio
@@ -250,14 +263,6 @@ class HTTPServer:
 
             return json.jsonify(success=True)
 
-        @app.route('/get_all_associations')
-        def admin_associations():
-            return json.dumps(dict(self.mac_to_user.mac_to_user.items()))
-
-        @app.route('/get_recent')
-        def admin_recents():
-            return json.dumps(self.recents.mac_to_last_timestamp)
-
     def notify_new_association(self, mac, profile):
         self.sio.emit('association', {'mac': mac, 'profile': profile})
 
@@ -265,7 +270,7 @@ class HTTPServer:
         self.sio.emit('macs', macs)
 
     def listen(self):
-        self.app.run(threaded=True, host='0.0.0.0', port=8080)
+        self.app.run(threaded=True, host='0.0.0.0', port=8081)
 
 
 class Orchestrator:
@@ -289,6 +294,7 @@ class Orchestrator:
     def setup_dispatch(self):
 
         def dispatch_to_all(devices):
+            print('new macs', devices)
             for device in devices:
                 self.mapping.seen(device)
                 self.recents.seen(device)
