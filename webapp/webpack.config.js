@@ -4,19 +4,21 @@ var path = require('path')
 var config = {
   devtool: 'source-map',
   entry: [
-    './src/main.js'
+    './src/index.js'
   ],
   output: {
-    path: path.join(__dirname, './static'),
-    filename: '/[name].js',
-    publicPath: '/static'
+    path: path.join(__dirname, '../server/dist'),
+    filename: '/[name].js'
   },
   module: {
     loaders: [
       {
         test: /\.js$/,
         exclude: /node_modules/,
-        loaders: ['react-hot', 'babel'],
+        loader: 'babel-loader',
+        query: {
+          presets: ['es2015', 'react', 'stage-0']
+        }
       }
     ]
   }
