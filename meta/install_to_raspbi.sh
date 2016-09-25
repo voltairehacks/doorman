@@ -2,11 +2,17 @@
 
 pi=office
 
+cd ..
+
 cd webapp
 webpack --config webpack.config.js
 
 cd ..
-scp -r server $pi:doorman
-scp service $pi:/etc/init.d/doorman
+ssh $pi 'mkdir -p doorman'
+scp -r server/main.py server/dist server/requirements.txt meta/service $pi:doorman
 
-ssh $pi -c 'sudo update-rc.d /etc/init.d/doorman defaults'
+ssh $pi 'sudo cp $HOME/doorman/service /etc/init.d/doorman \
+  && sudo pip install -r $HOME/doorman/requirements.txt \
+  && sudo chmod +x /etc/init.d/doorman \
+  && sudo apt-get install -y nmap \
+  && sudo update-rc.d doorman defaults'

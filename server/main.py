@@ -1,5 +1,5 @@
 # Standard library modules
-import Queue
+import queue
 import shelve
 import sqlite3
 import threading
@@ -117,7 +117,7 @@ class NetworkLogger:
 
     def __init__(self, url='storage.sqlite3'):
         self.url = url
-        self.queue = Queue.Queue()
+        self.queue = queue.Queue()
 
     def init(self):
         self.db = sqlite3.connect(self.url)
