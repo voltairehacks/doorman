@@ -147,13 +147,13 @@ class MacToUser:
         self.mac_to_user = shelve.open('profiles.storage')
 
     def associate(self, mac, user):
-        self.mac_to_user[mac] = user
+        self.mac_to_user[str(mac)] = user
 
     def get_for_mac(self, mac):
-        if mac in self.mac_to_user:
+        if str(mac) in self.mac_to_user:
             return self.mac_to_user[mac]
         else:
-            return { 'unregistered': True }
+            return {'unregistered': True}
 
 
 class HTTPServer:

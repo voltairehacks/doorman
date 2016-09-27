@@ -1,7 +1,10 @@
 import React from 'react'
 
 function MacView({mac, userMap}) {
-  return <div>{mac}</div>
+  if (!userMap[mac] || userMap[mac].unregistered) {
+    return <div>{mac}</div>
+  }
+  return <div>{mac}<br/>{JSON.stringify(userMap[mac])}</div>
 }
 
 export default class View extends React.Component {
