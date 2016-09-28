@@ -51,7 +51,7 @@ export default function render(sources, view, anchor) {
   function evaluateAndReplaceState(newState) {
     if (newState && !Object.is(state, newState)) {
       state = update({}, newState)
-      console.log('replacing state')
+      console.log('replacing state with', newState)
       events.emit(eventName, state)
     }
   }
