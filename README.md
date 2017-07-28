@@ -8,9 +8,9 @@ Quick & dirty:
 ```
     virtualenv env
     source env/bin/activate
-    # un /webapp
+    # in /webapp
     pip install -r requirements.txt
-    # in server
+    # in /server
     npm i
     webpack
     # in /webapp again
