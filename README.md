@@ -8,9 +8,12 @@ Quick & dirty:
 ```
     virtualenv env
     source env/bin/activate
+    # in /webapp
     pip install -r requirements.txt
+    # in /server
     npm i
     webpack
+    # in /webapp again
     sudo python server.py
 ```
 
