@@ -1,28 +1,19 @@
 # Standard library modules
 import Queue
 import shelve
-import sqlite3
 import threading
+import psycopg2
 import time
 from collections import namedtuple
 
 # Third party libraries
 import nmap
 import socketio
-from flask import Flask, request, json
 
 # Local imports
 
 
 Device = namedtuple('Device', ['ip', 'mac', 'timestamp'])
-
-CREATE_TABLE = '''CREATE TABLE IF NOT EXISTS seen(
-    id INTEGER PRIMARY KEY,
-    mac TEXT,
-    ip TEXT,
-    timestamp INTEGER
-)'''
-
 
 class NmapHarvester:
     """
@@ -33,7 +24,7 @@ class NmapHarvester:
     Listen to new scan results with the `register_listener` method.
     """
 
-    def __init__(self, query_range='192.168.0.1-255', secs_between_scans=6):
+    def __init__(self, query_range='192.168.1.1-255', secs_between_scans=60):
         self.nm = nmap.PortScanner()
         self.query_range = query_range
         self.listeners = []
@@ -41,6 +32,7 @@ class NmapHarvester:
 
     def infinite_scan(self):
         while True:
+            results = self._blocking_scan()
             results = self._blocking_scan()
             self._broadcast(results)
             time.sleep(self.time_between_scans)
@@ -116,23 +108,28 @@ class NetworkLogger:
     Stores seen MAC addresses, with their timestamps, into a database.
     """
 
-    def __init__(self, url='storage.sqlite3'):
+    def __init__(self, url='postgres://doorman@localhost/doorman'):
         self.url = url
         self.queue = Queue.Queue()
 
     def init(self):
-        self.db = sqlite3.connect(self.url)
-        self.db.execute(CREATE_TABLE)
-        self.db.commit()
+        self.db = psycopg2.connect(self.url)
 
     def await_queue(self):
         while True:
             devices = self.queue.get()
-            self.db.executemany(
-                'INSERT INTO seen(mac, ip, timestamp) VALUES(?, ?, ?)',
-                devices
-            )
+            cur = self.db.cursor()
+            for device in devices:
+                cur.execute(
+                    'INSERT INTO devices(name, mac) VALUES(%s, %s) ON CONFLICT DO NOTHING',
+                    ('unknown device', device[1])
+                )
+                cur.execute(
+                    'INSERT INTO seen(mac, ip) VALUES(%s, %s)',
+                    (device[1], device[0])
+                )
             self.db.commit()
+            cur.close()
 
     def push_devices(self, devices):
         self.queue.put(devices)
@@ -156,123 +153,6 @@ class MacToUser:
             return {'unregistered': True}
 
 
-class HTTPServer:
-
-    def __init__(self, mac_to_user, network_mapping, recents):
-        self.app = Flask(__name__)
-        self.app.debug = True
-        self.app._static_folder = 'dist'
-
-        self.sio = socketio.Server(async_mode='threading')
-
-        self.mac_to_user = mac_to_user
-        self.network_mapping = network_mapping
-        self.recents = recents
-
-        self.map_socket_to_ip = {}
-        self.map_ip_to_socket = {}
-
-        self.app.wsgi_app = socketio.Middleware(self.sio, self.app.wsgi_app)
-
-        self.setup_api()
-        self.setup_websocket()
-        self.setup_admin_endpoints()
-        self.setup_static()
-
-    def setup_static(self):
-        app = self.app
-
-        @app.route('/main.js')
-        def serve_app():
-            return self.serve_file('main.js')
-
-        @app.route('/main.js.map')
-        def serve_app_map():
-            return self.serve_file('main.js.map')
-
-        @app.route('/', defaults={'path': ''})
-        @app.route('/<path:path>')
-        def serve_index(path):
-            return self.serve_file('index.html')
-
-    def serve_file(self, path):
-        return self.app.send_static_file(path)
-
-    def setup_api(self):
-        app = self.app
-
-        @app.route('/profile/<mac>', methods=['GET'])
-        def get_profile(mac):
-            profile = self.mac_to_user.get_for_mac(mac)
-            if not profile:
-                return json.jsonify(not_found=True)
-            return json.dumps(profile)
-
-        @app.route('/profiles', methods=['POST'])
-        def get_profiles():
-            query = request.get_json()
-            print(query)
-
-            results = {}
-            for mac in query:
-                results[mac] = self.mac_to_user.get_for_mac(mac)
-            return json.dumps(results)
-
-        @app.route('/profile', methods=['POST'])
-        def put_profile():
-            ip = request.remote_addr
-            mac = self.network_mapping.get_mac_for_ip(ip)
-            if not mac:
-                return json.jsonify(success=False)
-
-            profile = request.get_json()
-            self.mac_to_user.associate(mac, profile)
-            self.notify_new_association(mac, profile)
-
-            return json.jsonify(success=True)
-
-        @app.route('/associations')
-        def associations():
-            return json.dumps(dict(self.mac_to_user.mac_to_user.items()))
-
-        @app.route('/latest_macs')
-        def latest_macs():
-            return json.dumps(self.recents.mac_to_last_timestamp)
-
-    def setup_websocket(self):
-        sio = self.sio
-
-        @sio.on('connect')
-        def connect(socket_id, environ):
-            ip = environ['REMOTE_ADDR']
-            self.map_socket_to_ip[socket_id] = ip
-            self.map_ip_to_socket[ip] = socket_id
-
-    def setup_admin_endpoints(self):
-        app = self.app
-
-        @app.route('/admin_associate', methods=['POST'])
-        def admin_associate():
-            query = request.get_json()
-
-            mac = query['mac']
-            profile = query['profile']
-
-            self.mac_to_user.associate(mac, profile)
-            self.notify_new_association(mac, profile)
-
-            return json.jsonify(success=True)
-
-    def notify_new_association(self, mac, profile):
-        self.sio.emit('association', {'mac': mac, 'profile': profile})
-
-    def notify_latest_macs(self, macs):
-        self.sio.emit('macs', macs)
-
-    def listen(self):
-        self.app.run(threaded=True, host='0.0.0.0', port=8081)
-
-
 class Orchestrator:
 
     def __init__(self):
@@ -283,8 +163,6 @@ class Orchestrator:
 
         self.logger = NetworkLogger()
         self.mac_to_user = MacToUser()
-
-        self.server = HTTPServer(self.mac_to_user, self.mapping, self.recents)
 
         self.setup_dispatch()
         self.setup_threads()
@@ -304,7 +182,6 @@ class Orchestrator:
 
         def notify_clients(devices):
             macs = self.recents.latest_macs()
-            self.server.notify_latest_macs(macs)
 
         self.harvester.register_listener(dispatch_to_all)
         self.harvester.register_listener(dispatch_to_logger_queue)
@@ -317,7 +194,6 @@ class Orchestrator:
                 self.recents.expire_entries_before_timestamp(timestamp)
 
                 macs = self.recents.latest_macs()
-                self.server.notify_latest_macs(macs)
 
                 time.sleep(30)
 
@@ -340,7 +216,6 @@ class Orchestrator:
             thread = threading.Thread(target=thread_target)
             thread.start()
             self.threads.append(thread)
-        self.server.listen()
 
 if __name__ == '__main__':
     Orchestrator()
