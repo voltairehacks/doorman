@@ -1,21 +1,13 @@
-import React from 'react'
-import ReactDOM from 'react-dom'
+import React from 'react';
+import ReactDOM from 'react-dom';
+import './index.css';
+import App from './App';
+import { ApolloProvider } from 'react-apollo';
+import ApolloClient from 'apollo-boost';
 
-import withLatestMacData from './sources/mac'
-import withUserProfiles from './sources/users'
+import 'semantic-ui-css/semantic.min.css';
 
-import withUserActions from './actions/user'
+const client = new ApolloClient({ uri: 'http://192.168.1.153:5000/graphql' });
 
-import RootView from './view'
+ReactDOM.render(<ApolloProvider client={client}><App /></ApolloProvider>, document.getElementById('root'));
 
-import render from './fluidity'
-
-render(
-  [
-    withLatestMacData,
-    withUserProfiles,
-    withUserActions,
-  ],
-  RootView,
-  'root'
-)
