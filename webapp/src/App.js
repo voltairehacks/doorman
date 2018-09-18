@@ -117,25 +117,7 @@ mutation UpdatePerson($id: Int!, $name: String!) {
 class Associate extends Component {
 	render() {
     return <Table.Cell>
-      <Mutation mutation={ADD_PERSON_DEVICE} update={(cache, { data: { newPersonDevice } }) => {
-          if (newPersonDevice) {
-            const associations = cache.readQuery({ query: GET_ASSOCIATIONS })
-            cache.writeQuery({
-              query: GET_ASSOCIATIONS,
-              data: {
-                ...associations,
-                allPersonDevices: {
-                  ...associations.allPersonDevices,
-                    edges: associations.allPersonDevices.edges.concat([{
-                      ...newPersonDevice,
-                      __typename: 'PersonDevice'
-                    }])
-                }
-              }
-            })
-          }
-        }}
-      >
+      <Mutation mutation={ADD_PERSON_DEVICE} refetchQueries={[{ query: GET_ASSOCIATIONS }]}>
       {(addPersonDevice, { data, loading, error }) => {
         if (loading) return <span>loading...</span>
         if (error) return <div><span>Error:</span> <pre>{error.stack}</pre></div>
@@ -207,12 +189,29 @@ const Error = ({ text, error }) => <div className='ui vertical left aligned segm
 </div>
 
 class App extends PureComponent {
+
+  constructor(...parentArgs) {
+      super(...parentArgs)
+      this.state = { onlyRecent: false }
+      this.flip = () => this.setState({ onlyRecent: !this.state.onlyRecent })
+  }
+
   render() {
     return (
       <div>
         <div className="ui inverted vertical center aligned segment">
           <img src={logo} className="App-logo" alt="logo" />
         </div>
+        <div className='ui hidden divider' />
+        <div className="ui vertical grid">
+          <div className='ui container stackable vertical right aligned'>
+            <div onClick={this.flip}>
+              <label>Only Recent &nbsp;</label>
+              <input type='checkbox' checked={this.state.onlyRecent}/>
+            </div>
+          </div>
+        </div>
+        <div className='ui hidden divider' />
         <div className='ui hidden divider' />
         { this.renderContent() }
       </div>
@@ -223,14 +222,17 @@ class App extends PureComponent {
     return <Query query={GET_PERSONS}>
       {({ loading, error, data }) => {
         if (loading) return <Loading text='people' />
-        if (error) return <Error text='people' error={error} />
+        if (error || ! data) return <Error text='people' error={error} />
         const people = data.allPeople.edges.map(person => person.node)
 
         return <Query query={GET_DEVICES}>
           {({ loading, error, data }) => {
             if (loading) return <Loading text='known devices' />
             if (error) return <Error text='known devices' error={error} />
-            const devices = data.allDevices.edges.map(node => node.node)
+            const now = new Date().getTime()
+            const devices = data.allDevices.edges.map(node => node.node).filter(
+              device => !this.state.onlyRecent || ((now - new Date(device.lastSeen).getTime()) < 120 * 1000)
+            )
             const deviceInfo = {}
             for (let device of devices) {
               deviceInfo[device.id] = device
@@ -244,17 +246,19 @@ class App extends PureComponent {
                 const deviceMap = {}
                 const deviceList = {}
                 for (let peopleDevice of peopleDevices) {
-                  deviceMap[peopleDevice.device] = peopleDevice.person
-                  deviceList[peopleDevice.person] = deviceList[peopleDevice.person] || []
-                  deviceList[peopleDevice.person].push({ ...deviceInfo[peopleDevice.device], peopleDeviceId: peopleDevice.id })
+                  if (deviceInfo[peopleDevice.device]) {
+                    deviceMap[peopleDevice.device] = peopleDevice.person
+                    deviceList[peopleDevice.person] = deviceList[peopleDevice.person] || []
+                    deviceList[peopleDevice.person].push({ ...deviceInfo[peopleDevice.device], peopleDeviceId: peopleDevice.id })
+                  }
                 }
 
                 return (
                   <div id='internal'>
-                    <PeopleDevices people={people} deviceList={deviceList} peopleDevices={peopleDevices}/>
+                    <PeopleDevices people={people} deviceList={deviceList} peopleDevices={peopleDevices} onlyRecent={this.state.onlyRecent}/>
                     <div className='ui hidden divider' />
                     <div className='ui hidden divider' />
-                    <Devices devices={devices.filter(device => !deviceMap[device.id])} people={people} />
+                    <Devices devices={devices.filter(device => !deviceMap[device.id])} people={people}/>
                   </div>
                 )
               }}
@@ -268,15 +272,16 @@ class App extends PureComponent {
 
 class RemovePerson extends Component {
     render() {
-      return <Mutation mutation={REMOVE_PERSON} update={(cache, { data: { deletedPersonId } }) => {
+      return <Mutation mutation={REMOVE_PERSON} update={(cache, data) => {
         const associations = cache.readQuery({ query: GET_PERSONS })
+        const deletedPersonId = JSON.parse(atob(data.data.deletePersonById.deletedPersonId))[1]
         cache.writeQuery({
           query: GET_PERSONS,
           data: {
             ...associations,
             allPeople: {
               ...associations.allPeople,
-              edges: associations.allPeople.edges.filter(edge => edge != deletedPersonId)
+              edges: associations.allPeople.edges.filter(edge => edge.node.id != deletedPersonId)
             }
           }
         })
@@ -312,7 +317,7 @@ class Ungroup extends Component {
             ...associations,
             allPersonDevices: {
               ...associations.allPersonDevices,
-              edges: associations.allPersonDevices.edges.filter(edge => edge != deletedPersonDeviceId)
+              edges: associations.allPersonDevices.edges.filter(edge => edge != deletedPersonDeviceId).map(edge => ({ ...edge, __type: 'PersonDevice' }))
             }
           }
         })
@@ -376,7 +381,10 @@ class PeopleDevices extends Component {
             </Table.Row>
         </Table.Header>
         <Table.Body>
-          { this.props.people.map(person => this.personRow(person)) }
+          { this.props.people
+              .filter(person => !this.props.onlyRecent || this.props.deviceList[person.id])
+              .map(person => this.personRow(person))
+          }
           <AddPersonRow />
         </Table.Body>
       </Table>
@@ -459,23 +467,7 @@ class PersonName extends Component {
 
 class AddPersonRow extends Component {
     render() {
-      return <Mutation mutation={ADD_PERSON} update={(cache, { data: { newPerson } }) => {
-        const persons = cache.readQuery({ query: GET_PERSONS })
-        cache.writeQuery({
-          query: GET_PERSONS,
-          data: {
-            ...persons,
-            allPeople: {
-              ...persons.allPeople,
-                edges: persons.allPeople.edges.concat([{
-                  ...newPerson,
-                  __typeName: "Person"
-                }])
-            }
-          }
-        })
-      }}
-      >
+      return <Mutation mutation={ADD_PERSON} refetchQueries={[{ query: GET_PERSONS }]}>
       {(addPerson, { data, loading, error }) => {
         if (loading) return <span>loading...</span>
         if (error) return <div><span>Error:</span> <pre>{error.stack}</pre></div>
