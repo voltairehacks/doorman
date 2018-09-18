@@ -309,19 +309,7 @@ class RemovePerson extends Component {
 
 class Ungroup extends Component {
     render() {
-      return <Mutation mutation={REMOVE_PERSON_DEVICE} update={(cache, { data: { deletedPersonDeviceId } }) => {
-        const associations = cache.readQuery({ query: GET_ASSOCIATIONS })
-        cache.writeQuery({
-          query: GET_ASSOCIATIONS,
-          data: {
-            ...associations,
-            allPersonDevices: {
-              ...associations.allPersonDevices,
-              edges: associations.allPersonDevices.edges.filter(edge => edge != deletedPersonDeviceId).map(edge => ({ ...edge, __type: 'PersonDevice' }))
-            }
-          }
-        })
-      }}>
+      return <Mutation mutation={REMOVE_PERSON_DEVICE} refetchQueries={[{ query: GET_ASSOCIATIONS }]} >
       {(deletePersonDevice, { data, loading, error }) => {
         if (loading) return <span>loading...</span>
         if (error) return <div><span>Error:</span> <pre>{error.stack}</pre></div>
